@@ -1,0 +1,216 @@
+<head>
+    <style>
+        body {
+            margin: 0;
+        }
+
+        #bottom-right {
+            position: absolute;
+            font-size: 12px;
+            font-family: sans-serif;
+            padding: 5px;
+            border-radius: 3px;
+            background-color: rgba(200, 200, 200, 0.1);
+            color: lavender;
+            bottom: 10px;
+            right: 10px;
+        }
+    </style>
+
+    <script src="https://unpkg.com/three"></script>
+    <script src="https://unpkg.com/satellite.js/dist/satellite.min.js"></script>
+
+    <script src="https://unpkg.com/globe.gl"></script>
+    <!--  <script src="../../dist/globe.gl.js"></script>-->
+    <script src="./gps.js"></script>
+</head>
+
+<body>
+    <div id="chart"></div>
+    <div id="bottom-right"></div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+        const loader = new GLTFLoader();
+        export { loader };
+
+        const EARTH_RADIUS_KM = 6371; // km
+        const SAT_SIZE = 100; // km
+        const TIME_STEP = 3 * 1000; // per frame
+        const bottom_right = document.getElementById('bottom-right');
+
+        let world = null;
+        let waypointsPromise = null;
+
+        function pilot_summary(pilot, lat, lng) {
+            let a = [pilot.callsign];
+            if ('flight_plan' in pilot && pilot.flight_plan) {
+                a = a.concat([pilot.flight_plan.departure, '->', pilot.flight_plan.arrival]);
+            }
+            a = a.concat(['heading: ', pilot.heading, 'GS: ', pilot.groundspeed, 'gps: ', lat.toFixed(4), ',', lng.toFixed(4)])
+            return a.join(' ');
+        }
+
+        async function object_click(obj, event) {
+            let pilot = obj.extra_data;
+            console.log(pilot.callsign);
+            bottom_right.innerText = pilot_summary(pilot, pilot.latitude, pilot.longitude);
+
+            let waypointsJson = await waypointsPromise;
+            function wat(a) {
+                return {
+                    lat: waypointsJson[a].lat,
+                    lng: waypointsJson[a].lng,
+                    alt: (pilot.altitude * 0.3048) / (EARTH_RADIUS_KM * 1000) * 50,
+                    name: a
+                };
+            }
+            if (!'flight_plan' in pilot || !'route' in  pilot.flight_plan) {
+                return;
+            }
+
+            let unkown_waypoints = pilot.flight_plan.route.split(' ').filter(wp => wp != "DCT" && !(wp in waypointsJson));
+            console.log('unknown: ' + unkown_waypoints);
+            let waypoints = pilot.flight_plan.route.split(' ').filter(wp => wp != "DCT" && wp in waypointsJson).map(wp => wat(wp));
+            if (!'departure' in pilot.flight_plan || !'arrival' in pilot.flight_plan) {
+                return;
+            }
+            let departure_waypoint = []
+            if (pilot.flight_plan.departure in waypointsJson) {
+                departure_waypoint = [{
+                    lat: waypointsJson[pilot.flight_plan.departure].lat,
+                    lng: waypointsJson[pilot.flight_plan.departure].lng,
+                    alt: 0,
+                    name: pilot.flight_plan.departure
+                }];
+            }
+            let arrival_waypoint = []
+            if (pilot.flight_plan.arrival in waypointsJson) {
+                arrival_waypoint = [{
+                    lat: waypointsJson[pilot.flight_plan.arrival].lat,
+                    lng: waypointsJson[pilot.flight_plan.arrival].lng,
+                    alt: 0,
+                    name: pilot.flight_plan.arrival
+                }];
+            } else {
+                console.log(pilot.flight_plan.arrival)
+            }
+            let pathData = {
+                'route': pilot.flight_plan.departure + ' ' + pilot.flight_plan.route + ' ' + pilot.flight_plan.arrival,
+                'fixes': departure_waypoint.concat(waypoints).concat(arrival_waypoint)
+            };
+            world.pathsData([pathData]);
+        }
+
+        world = Globe()
+            (document.getElementById('chart'))
+            .globeImageUrl('https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg')
+            .objectLat('lat')
+            .objectLng('lng')
+            .objectAltitude('alt')
+            .objectFacesSurface(false)
+            .objectLabel('name')
+            .onObjectClick(object_click)
+            .pathPoints('fixes')
+            .pathPointLat('lat')
+            .pathPointLng('lng')
+            .pathPointAlt('alt')
+            .pathColor(() => 'rgba(255,0,255,0.6)')
+            .pathStroke(5)
+            .pathLabel('route')
+            .pathDashLength(0.1)
+            .pathDashGap(0.008)
+            .pathDashAnimateTime(12000);
+
+        setTimeout(() => world.pointOfView({ altitude: 3.5 }));
+
+
+
+
+        const satGeometry = new THREE.OctahedronGeometry(SAT_SIZE * world.getGlobeRadius() / EARTH_RADIUS_KM / 2, 0);
+        const satMaterial = new THREE.MeshLambertMaterial({ color: 'palegreen', transparent: true, opacity: 0.7 });
+        world.objectThreeObject(() => new THREE.Mesh(satGeometry, satMaterial));
+        
+        function object(gltf, o) {
+            const scene = gltf.scene.clone();
+            const euler = new THREE.Euler(Math.PI/2-deg_to_rad(o.lat), deg_to_rad(o.lng), 0, 'ZYX');
+            const q1 = new THREE.Quaternion();
+            q1.setFromEuler(euler);
+            const q2 = new THREE.Quaternion();
+            q2.setFromAxisAngle( new THREE.Vector3( 0, 1, 0), Math.PI - deg_to_rad(o.extra_data.heading));
+            const q3 = new THREE.Quaternion();
+            q3.multiplyQuaternions(q1, q2)
+
+            scene.setRotationFromQuaternion(q3);
+
+            scene.scale.set(0.015, 0.015, 0.015);
+            return scene;
+        }
+        let low_poly_airliner = loader.load('low_poly_airplane/scene.gltf', function (gltf) {
+            world.objectThreeObject((o) => object(gltf, o));
+        });
+
+        let vatsimJson = null;
+        function onNewVatim(json) {
+            console.log('Refreshing vatsim json');
+            if (vatsimJson === null) {
+                vatsimJson = json;
+                installFrameTicker();
+            } else {
+                vatsimJson = json;
+            }
+        }
+
+        function onNewWaypoints(json) {
+            waypointsJson = json;
+        }
+
+        async function reloadFromVatsim() {
+            fetch('//data.vatsim.net/v3/vatsim-data.json')
+                .then((response) => response.json())
+                .then((json) => {
+                    onNewVatim(json)
+                })
+            waypointsPromise = new Promise((on) => fetch('./cifp/waypoints.json')
+                .then((response) => response.json())
+                .then((json) => {
+                    console.log('Have waypoints');
+                    on(json)
+                }));
+
+        }
+        reloadFromVatsim();
+        setInterval(reloadFromVatsim, 30 * 1000);
+
+        function installFrameTicker() {
+            (function frameTicker() {
+                requestAnimationFrame(frameTicker);
+
+                let json = vatsimJson;
+
+                let data_time = new Date(json.general.update_timestamp);
+                let time = new Date();
+
+                let objects = [];
+                json.pilots.forEach(pilot => {
+                    // {"cid":1571403,"name":"DS.Téwis TFFR","callsign":"AFR013","server":"USA-EAST2","pilot_rating":0,"military_rating":0,"latitude":-46.3658,"longitude":-63.08827,"altitude":38003,"groundspeed":437,"transponder":"1200","heading":204,"qnh_i_hg":29.92,"qnh_mb":1013,"flight_plan":{"flight_rules":"I","aircraft":"B77W/H-VGDW/C","aircraft_faa":"H/B77W/L","aircraft_short":"B77W","departure":"LFPG","arrival":"SAWH","alternate":"SAWG","cruise_tas":"464","altitude":"38000","deptime":"2350","enroute_time":"1540","fuel_time":"1640","remarks":"OPR/AIRFRANCEVIRTUEL /V/","route":"LGL5Z LGL UT176 KURIS UN872 ERIGA R14 EPIXO A5 LOTEE UP600 STG UN728 DEMOS UN741 VERAM Q205 TELMU UN741 LIDRO Q205 NELSO UN741 EZE UW29 GBE UP664 DIL UT662 GRA UW42 USU","revision_id":0,"assigned_transponder":"0000"},"logon_time":"2023-06-29T22:26:23.0464869Z","last_updated":"2023-06-30T13:18:45.2615842Z"},
+                    let dt = (time - new Date(pilot.last_updated)) / 1000;
+                    let object = {}
+                    let gpsc = new GPSCoordinates(pilot.latitude, pilot.longitude);
+                    gpsc.movebytime(pilot.heading, pilot.groundspeed, dt);
+                    object.lat = gpsc.latitude;
+                    object.lng = gpsc.longitude;
+                    object.alt = (pilot.altitude * 0.3048) / (EARTH_RADIUS_KM * 1000) * 50;
+
+                    object.name = pilot_summary(pilot, object.lat, object.lng);
+                    object.extra_data = pilot;
+                    objects.push(object);
+                });
+                world.objectsData(objects);
+            })();
+        }
+
+    </script>
+</body>
