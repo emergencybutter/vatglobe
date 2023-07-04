@@ -17,7 +17,18 @@
         }
     </style>
 
-    <!--<script src="https://unpkg.com/globe.gl"></script>-->
+<script src="https://unpkg.com/globe.gl"></script>
+<!--<script src="https://unpkg.com/three"></script>-->
+<script async src="https://unpkg.com/es-module-shims@1.6.3/dist/es-module-shims.js"></script>
+
+<script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.154.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.154.0/examples/jsm/"
+    }
+  }
+</script>
 </head>
 
 <body>
@@ -25,7 +36,7 @@
     <div id="bottom-right"></div>
 
     <script type="module">
-        import Globe from 'globe.gl';
+        //import Globe from 'globe.gl';
         import * as THREE from 'three';
         import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
@@ -67,13 +78,13 @@
                 return;
             }
 
-            let unkown_waypoints = pilot.flight_plan.route.split(' ').filter(wp => wp != "DCT" && !(wp in waypointsJson));
+            const unkown_waypoints = pilot.flight_plan.route.split(' ').filter(wp => wp != "DCT" && !(wp in waypointsJson));
             console.log('unknown wp: ' + unkown_waypoints);
-            let waypoints = pilot.flight_plan.route.split(' ').filter(wp => wp != "DCT" && wp in waypointsJson).map(wp => waypoint(wp));
+            const waypoints = pilot.flight_plan.route.split(' ').filter(wp => wp != "DCT" && wp in waypointsJson).map(wp => waypoint(wp));
             if (!'departure' in pilot.flight_plan || !'arrival' in pilot.flight_plan) {
                 return;
             }
-            let departure_waypoint = []
+            const departure_waypoint = []
             if (pilot.flight_plan.departure in waypointsJson) {
                 departure_waypoint = [{
                     lat: waypointsJson[pilot.flight_plan.departure].lat,
@@ -82,7 +93,7 @@
                     name: pilot.flight_plan.departure
                 }];
             }
-            let arrival_waypoint = []
+            const arrival_waypoint = []
             if (pilot.flight_plan.arrival in waypointsJson) {
                 arrival_waypoint = [{
                     lat: waypointsJson[pilot.flight_plan.arrival].lat,
@@ -93,7 +104,7 @@
             } else {
                 console.log(pilot.flight_plan.arrival)
             }
-            let pathData = {
+            const pathData = {
                 'route': pilot.flight_plan.departure + ' ' + pilot.flight_plan.route + ' ' + pilot.flight_plan.arrival,
                 'fixes': departure_waypoint.concat(waypoints).concat(arrival_waypoint)
             };
@@ -182,13 +193,13 @@
             .pathPointLat('lat')
             .pathPointLng('lng')
             .pathPointAlt('alt')
-            .pathColor(() => 'rgba(255,0,255,0.6)')
+            .pathColor(() => 'rgba(255,0,255,0.6)')  // Children of the Magenta line!
             .pathStroke(5)
             .pathLabel('route')
             .pathDashLength(0.1)
             .pathDashGap(0.008)
             .pathDashAnimateTime(12000);
-        setTimeout(() => world.pointOfView({ altitude: 3.5 }));
+        setTimeout(() => world.pointOfView({ altitude: 2 }));
         setupPlaneModel(world);
         main(world);
     </script>
