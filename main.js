@@ -29,8 +29,8 @@ function object_click(world, waypointsJson, dom_obj, obj, event) {
 
     function waypoint(a) {
         return {
-            lat: waypointsJson[a].lat,
-            lng: waypointsJson[a].lng,
+            lat: waypointsJson.waypoints[a].lat,
+            lng: waypointsJson.waypoints[a].lng,
             alt: (pilot.altitude * FOOT_IN_M) / (EARTH_RADIUS_KM * 1000) * 50,
             name: a
         };
@@ -39,26 +39,65 @@ function object_click(world, waypointsJson, dom_obj, obj, event) {
         return;
     }
 
-    const unkown_waypoints = pilot.flight_plan.route.split(' ').filter(wp => wp != "DCT" && !(wp in waypointsJson));
-    console.log('unknown wp: ' + unkown_waypoints);
-    const waypoints = pilot.flight_plan.route.split(' ').filter(wp => wp != "DCT" && wp in waypointsJson).map(wp => waypoint(wp));
+    const unkown_waypoints = pilot.flight_plan.route.split(' ').filter(wp => wp != "DCT" && !(wp in waypointsJson.waypoints || wp in waypointsJson.routes));
+    if (unkown_waypoints.length > 0) {
+        console.log('Unknown wp: ' + unkown_waypoints);
+    }
+    const decoded_waypoints = []
+    let airway = null;
+    let airway_start = null;
+    let airway_end = null;
+    pilot.flight_plan.route.split(' ').filter(wp => wp != "DCT").forEach(wp => {
+        if (airway) {
+            airway_end = wp;
+
+            const index_start = airway.indexOf(airway_start);
+            const index_end = airway.indexOf(airway_end);
+            if (index_start >= 0 && index_end >= 0) {
+                const direction = index_start < index_end ? 1 : -1;
+
+                for (let i = index_start + direction; i * direction <= index_end * direction; i += direction) {
+                    if (airway[i] in waypointsJson.waypoints) {
+                        decoded_waypoints.push(waypoint(airway[i]));
+                    } else {
+                        console.log('Cannot find route waypoint: ' + airway[i])
+                    }
+                }
+            } else {
+                console.log('Cannot find ' + airway_start + ' or ' + airway_end + ' in airway');
+                // Give up on the route but add the end way points.
+                decoded_waypoints.push(waypoint(airway_end));
+            }
+            airway = null;
+            airway_start = null;
+            airway_end = null;
+        }else if (wp in waypointsJson.waypoints) {
+            decoded_waypoints.push(waypoint(wp));
+        } else if (wp in waypointsJson.routes) {
+            if (airway != null) {
+                console.log('Cannot decode route airway');
+            }
+            airway = waypointsJson.routes[wp];
+            airway_start = decoded_waypoints[decoded_waypoints.length - 1].name;
+        }
+    });
     if (!'departure' in pilot.flight_plan || !'arrival' in pilot.flight_plan) {
         return;
     }
     const departure_waypoint = []
-    if (pilot.flight_plan.departure in waypointsJson) {
+    if (pilot.flight_plan.departure in waypointsJson.waypoints) {
         departure_waypoint.push({
-            lat: waypointsJson[pilot.flight_plan.departure].lat,
-            lng: waypointsJson[pilot.flight_plan.departure].lng,
+            lat: waypointsJson.waypoints[pilot.flight_plan.departure].lat,
+            lng: waypointsJson.waypoints[pilot.flight_plan.departure].lng,
             alt: 0,
             name: pilot.flight_plan.departure
         });
     }
     const arrival_waypoint = []
-    if (pilot.flight_plan.arrival in waypointsJson) {
+    if (pilot.flight_plan.arrival in waypointsJson.waypoints) {
         arrival_waypoint.push({
-            lat: waypointsJson[pilot.flight_plan.arrival].lat,
-            lng: waypointsJson[pilot.flight_plan.arrival].lng,
+            lat: waypointsJson.waypoints[pilot.flight_plan.arrival].lat,
+            lng: waypointsJson.waypoints[pilot.flight_plan.arrival].lng,
             alt: 0,
             name: pilot.flight_plan.arrival
         });
@@ -67,8 +106,11 @@ function object_click(world, waypointsJson, dom_obj, obj, event) {
     }
     const pathData = {
         'route': pilot.flight_plan.departure + ' ' + pilot.flight_plan.route + ' ' + pilot.flight_plan.arrival,
-        'fixes': departure_waypoint.concat(waypoints).concat(arrival_waypoint)
+        'fixes': departure_waypoint.concat(decoded_waypoints).concat(arrival_waypoint)
     };
+    pathData.fixes.forEach((wp) => {
+        console.log(wp.name);
+    });
     world.pathsData([pathData]);
 }
 
@@ -162,4 +204,4 @@ function main() {
     })();
 }
 
-export {main};
+export { main };
